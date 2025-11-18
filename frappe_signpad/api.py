@@ -116,7 +116,7 @@ Processes the signature submission after verifying the token again.
 			"folder": "Home/Signatures",
 			"is_private": 1 # Keep signature private
 		})
-		file_doc.insert()
+		file_doc.insert(ignore_permissions=True)
 		frappe.db.commit()
 
 		# 4. Update the Invoice document with signer name and signature link
