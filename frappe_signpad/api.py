@@ -120,16 +120,13 @@ Processes the signature submission after verifying the token again.
 		frappe.db.commit()
 
 		# 4. Update the Invoice document with signer name and signature link
-		doc.db_set("signer_name", signer_name) # Ensure these custom fields exist on Sales Invoice
-		# doc.db_set("signature_file", file_doc.file_url)
-
-		# Optional: Set a flag indicating it was signed digitally
-		# doc.db_set("is_signed_digitally", 1)
-		doc.db_set("signed_on", now_datetime())
+		doc.signer_name = signer_name
+		doc.signed_on = now_datetime()
 
 		# Final action: Change the document status or process the next step
 		# E.g., You might move it to a "Confirmed" status, or submit it if docstatus was 0
 
+		doc.save()
 		frappe.db.commit()
 
 		frappe.msgprint(f"Signature for {invoice_id} acquired successfully.")
