@@ -1,0 +1,15 @@
+{
+  "name": "frappe_signpad",
+  "version": "1.0.0",
+  "description": "An intuitive and secure web application for collecting electronic signatures, designed to streamline your approval processes.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "cd signpad && yarn install",
+    "dev": "cd signpad && yarn dev",
+    "build": "cd signpad && yarn build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
