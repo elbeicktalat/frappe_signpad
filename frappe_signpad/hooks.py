@@ -9,6 +9,10 @@ app_license = "mit"
 # ------------------
 
 # required_apps = []
+fixtures = [
+	{"doctype": "Custom Field", "filters": [["module", "=", "Frappe Signpad"]]},
+	{"doctype": "Client Script", "filters": [["module", "=", "Frappe Signpad"]]},
+]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -242,3 +246,5 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+
+website_route_rules = [{'from_route': '/signpad/<path:app_path>', 'to_route': 'signpad'},]
