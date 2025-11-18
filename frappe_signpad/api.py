@@ -126,7 +126,7 @@ Processes the signature submission after verifying the token again.
 		# Final action: Change the document status or process the next step
 		# E.g., You might move it to a "Confirmed" status, or submit it if docstatus was 0
 
-		doc.save()
+		doc.save(ignore_permissions=True)
 		frappe.db.commit()
 
 		frappe.msgprint(f"Signature for {invoice_id} acquired successfully.")
