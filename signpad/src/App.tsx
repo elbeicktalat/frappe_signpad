@@ -26,6 +26,10 @@ interface Translations {
     lang_it: string;
     lang_en: string;
     lang_ar: string;
+    message_loading: string;
+    message_loading_details: string;
+    error_loading_title: string;
+    error_loading_details: string;
 }
 
 // Type for the translation map
@@ -92,6 +96,10 @@ const translations: TranslationMap = {
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
+        message_loading: 'Loading Invoice Details...',
+        message_loading_details: 'Please wait while we securely retrieve the invoice data.',
+        error_loading_title: 'Error Loading Invoice',
+        error_loading_details: 'Invoice details could not be retrieved. Please ensure the link is correct or try again.',
     },
     it: {
         title: 'Conferma & Firma Fattura',
@@ -116,6 +124,10 @@ const translations: TranslationMap = {
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
+        message_loading: 'Caricamento Dettagli Fattura...',
+        message_loading_details: 'Attendere prego mentre recuperiamo in sicurezza i dati della fattura.',
+        error_loading_title: 'Errore nel Caricamento della Fattura',
+        error_loading_details: 'I dettagli della fattura non sono stati recuperati. Assicurati che il link sia corretto o riprova.',
     },
     ar: {
         title: 'تأكيد وتوقيع الفاتورة',
@@ -140,6 +152,10 @@ const translations: TranslationMap = {
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
+        message_loading: 'جاري تحميل تفاصيل الفاتورة...',
+        message_loading_details: 'يرجى الانتظار بينما نقوم باسترداد بيانات الفاتورة بأمان.',
+        error_loading_title: 'خطأ في تحميل الفاتورة',
+        error_loading_details: 'تعذر استرداد تفاصيل الفاتورة. يرجى التأكد من صحة الرابط أو المحاولة مرة أخرى.',
     },
 };
 
@@ -200,75 +216,66 @@ const App: React.FC = () => {
             setFetchError(null);
             setIsLoading(true);
 
-            const MAX_RETRIES: number = 3;
+            try {
+                const response = await fetch(frappeFetchUrl, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        invoice_id: invoiceId,
+                        token: securityToken,
+                    }),
+                });
 
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                    const response = await fetch(frappeFetchUrl, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            invoice_id: invoiceId,
-                            token: securityToken,
-                        }),
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        const errorMessage = errorData.message || `HTTP Error: ${response.status} ${response.statusText}`;
-                        throw new Error(errorMessage);
-                    }
-
-                    const doc_response = await response.json();
-                    const doc = doc_response.message;
-
-                    // --- 🛑 DATA VALIDATION CHECK ---
-                    if (!doc || !doc.name || typeof doc.total_qty !== 'number' || typeof doc.grand_total !== 'number' || !doc.due_date || !doc.currency || typeof doc.is_signed === 'undefined') {
-                        const missingFields = [
-                            !doc.name && 'Invoice ID (name)', typeof doc.total_qty !== 'number' && 'Total Quantity',
-                            typeof doc.grand_total !== 'number' && 'Total Amount', !doc.due_date && 'Due Date',
-                            !doc.currency && 'Currency', typeof doc.is_signed === 'undefined' && 'Is Signed Status'
-                        ].filter(Boolean).join(', ');
-                        throw new Error(`Critical invoice data missing from server response: ${missingFields}.`);
-                    }
-
-                    const currencyCode = doc.currency.toUpperCase();
-                    const currencySymbol = CurrencySymbolMap[currencyCode] || currencyCode;
-
-                    const initialIsSigned: boolean = !!doc.is_signed;
-
-                    const loadedData: InvoiceDetails = {
-                        invoice_id: doc.name,
-                        total_qty: doc.total_qty,
-                        currency_symbol: currencySymbol,
-                        total_amount: `${(doc.grand_total as number).toLocaleString('en-US', {minimumFractionDigits: 2})}`,
-                        due_date: doc.due_date,
-                        is_signed: initialIsSigned, // Map to interface
-                    };
-
-                    setInvoiceData(loadedData);
-                    setIsDocumentSigned(initialIsSigned); // SET: Store the initial signed status
-
-                    // 4. MESSAGE: Display warning if already signed
-                    if (initialIsSigned) {
-                        setMessage(T.message_already_signed);
-                    }
-
-                    setIsLoading(false);
-                    return;
-
-                } catch (error: any) {
-                    // ... (Retry logic remains the same)
-                    console.error(`Attempt ${attempt + 1} failed to fetch invoice:`, error.message);
-                    if (attempt < MAX_RETRIES - 1) {
-                        const delay: number = Math.pow(2, attempt) * 1000;
-                        await new Promise(res => setTimeout(res, delay));
-                    } else {
-                        setFetchError(`Access Denied or Failed to load invoice ${invoiceId}. Details: ${error.message.substring(0, 150)}...`);
-                        setIsLoading(false);
-                        return;
-                    }
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    const errorMessage = errorData.message || `HTTP Error: ${response.status} ${response.statusText}`;
+                    throw new Error(errorMessage);
                 }
+
+                const doc_response = await response.json();
+                const doc = doc_response.message;
+
+                // --- 🛑 DATA VALIDATION CHECK ---
+                if (!doc || !doc.name || typeof doc.total_qty !== 'number' || typeof doc.grand_total !== 'number' || !doc.due_date || !doc.currency || typeof doc.is_signed === 'undefined') {
+                    const missingFields = [
+                        !doc.name && 'Invoice ID (name)', typeof doc.total_qty !== 'number' && 'Total Quantity',
+                        typeof doc.grand_total !== 'number' && 'Total Amount', !doc.due_date && 'Due Date',
+                        !doc.currency && 'Currency', typeof doc.is_signed === 'undefined' && 'Is Signed Status'
+                    ].filter(Boolean).join(', ');
+                    throw new Error(`Critical invoice data missing from server response: ${missingFields}.`);
+                }
+
+                const currencyCode = doc.currency.toUpperCase();
+                const currencySymbol = CurrencySymbolMap[currencyCode] || currencyCode;
+
+                const initialIsSigned: boolean = !!doc.is_signed;
+
+                const loadedData: InvoiceDetails = {
+                    invoice_id: doc.name,
+                    total_qty: doc.total_qty,
+                    currency_symbol: currencySymbol,
+                    total_amount: `${(doc.grand_total as number).toLocaleString('en-US', {minimumFractionDigits: 2})}`,
+                    due_date: doc.due_date,
+                    is_signed: initialIsSigned, // Map to interface
+                };
+
+                setInvoiceData(loadedData);
+                setIsDocumentSigned(initialIsSigned); // SET: Store the initial signed status
+
+                // 4. MESSAGE: Display warning if already signed
+                if (initialIsSigned) {
+                    setMessage(T.message_already_signed);
+                }
+
+                setIsLoading(false);
+                return;
+
+            } catch (error: any) {
+                // Log the failure without retrying
+                console.error(`Failed to fetch invoice:`, error.message);
+                setFetchError(`Access Denied or Failed to load invoice ${invoiceId}. Details: ${error.message.substring(0, 150)}...`);
+                setIsLoading(false);
+                return;
             }
         };
 
@@ -437,37 +444,26 @@ const App: React.FC = () => {
 
         setMessage(T.message_sending);
 
-        const MAX_RETRIES: number = 3;
+        try {
+            const response = await fetch(frappeApiUrl, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(dataToSend),
+            });
 
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                const response = await fetch(frappeApiUrl, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(dataToSend),
-                });
-
-                if (response.ok) {
-                    setMessage(T.message_success);
-                    setIsDocumentSigned(true); // UPDATE: Mark as signed locally after successful submission
-                    return;
-                } else {
-                    const errorData: any = await response.json();
-                    const errorMessage = errorData.message || `Frappe Error: ${response.status} ${response.statusText}`;
-                    throw new Error(errorMessage);
-                }
-            } catch (error: any) {
-                // ... (Retry logic remains the same)
-                console.error(`Attempt ${attempt + 1} failed:`, error.message);
-                if (attempt < MAX_RETRIES - 1) {
-                    const delay: number = Math.pow(2, attempt) * 1000;
-                    await new Promise(res => setTimeout(res, delay));
-                    setMessage(`${T.message_sending} (${attempt + 2}/${MAX_RETRIES})...`);
-                } else {
-                    setMessage(T.message_fail);
-                    break;
-                }
+            if (response.ok) {
+                setMessage(T.message_success);
+                setIsDocumentSigned(true); // UPDATE: Mark as signed locally after successful submission
+                return;
+            } else {
+                const errorData: any = await response.json();
+                const errorMessage = errorData.message || `Frappe Error: ${response.status} ${response.statusText}`;
+                throw new Error(errorMessage);
             }
+        } catch (error: any) {
+            // Log the failure and display the fail message
+            console.error(`Submission failed:`, error.message);
+            setMessage(T.message_fail);
         }
     };
 
@@ -499,15 +495,16 @@ const App: React.FC = () => {
     if (isLoading) {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-                <div className="text-xl font-semibold text-blue-600 flex items-center space-x-3">
-                    <svg className="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none"
+                <div className="text-xl font-semibold text-blue-600 flex flex-col items-center space-y-3">
+                    <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none"
                          viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
                                 strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor"
                               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    <span>Loading Invoice Details...</span>
+                    <span className='text-2xl'>{T.message_loading}</span>
+                    <p className='text-sm font-normal text-gray-500 text-center'>{T.message_loading_details}</p>
                 </div>
             </div>
         );
@@ -515,10 +512,12 @@ const App: React.FC = () => {
 
     if (fetchError || !invoiceData) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir={textDirection}>
                 <div className="w-full max-w-xl bg-white p-8 rounded-xl shadow-xl border border-red-300">
-                    <h1 className="text-2xl font-bold text-red-600 mb-4">Error Loading Invoice</h1>
-                    <p className="text-gray-700 mb-6">{fetchError || "Invoice details could not be retrieved. Please ensure the link is correct or try again."}</p>
+                    <h1 className="text-2xl font-bold text-red-600 mb-4">{T.error_loading_title}</h1>
+                    <p className="text-gray-700 mb-6">
+                        {fetchError ? fetchError : T.error_loading_details}
+                    </p>
                     <p className="text-sm text-gray-500">
                         {invoiceId ? `Invoice ID attempted: ${invoiceId}` : 'No Invoice ID provided in URL.'}
                     </p>
@@ -619,6 +618,7 @@ const App: React.FC = () => {
                         <canvas
                             ref={canvasRef}
                             className={`w-full h-48 ${isDisabled ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
+                            style={{touchAction: 'none'}}
                             onMouseDown={startDrawing}
                             onMouseUp={endDrawing}
                             onMouseMove={draw}
