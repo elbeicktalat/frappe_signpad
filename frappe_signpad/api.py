@@ -4,7 +4,7 @@ import hmac
 import hashlib
 import json
 import base64
-from datetime import datetime
+import time  # Required to generate a unique timestamp for the file name
 
 # IMPORTANT: Store this in a secure config/settings file, NOT directly in the code!
 # For demonstration, it's here.
@@ -77,63 +77,119 @@ This replaces the vulnerable direct API call on the frontend.
 
 
 @frappe.whitelist(allow_guest=True)
-def submit_invoice_signature(invoice_id, token, signer_name, signature_image):
+def submit_invoice_signature(invoice_id, token, signer_name, signature_image, signature_trace_data):
 	"""
-Processes the signature submission after verifying the token again.
+	Receives signature data, including temporal trace (Audit Trail),
+	verifies integrity via Hash, and saves the evidence as attachments.
 	"""
-	if not invoice_id or not token or not signer_name or not signature_image:
-		frappe.throw("Missing required data (ID, Token, Name, or Signature).", frappe.exceptions.ValidationError)
+	# --------------------------------------------------------------------------------
+	# 1. Preliminary Checks and Security
+	# --------------------------------------------------------------------------------
+	if not invoice_id or not token or not signer_name or not signature_image or not signature_trace_data:
+		frappe.throw("Missing required data (ID, Token, Name, Signature, or Trace Data).",
+					 frappe.exceptions.ValidationError)
 
-	# 1. Fetch the document
+	# Fetch the document
 	try:
 		doc = frappe.get_doc(DOC_TYPE, invoice_id)
 	except frappe.exceptions.DoesNotExistError:
 		frappe.throw(f"Invoice {invoice_id} not found.", frappe.exceptions.NotFound)
 
-	# Check if invoice is already signed/submitted
+	# Check document status and token
 	if doc.docstatus != 1:
-		frappe.throw("Invoice is already submitted or canceled.", frappe.exceptions.PermissionError)
+		frappe.throw("Draft or canceled invoice cannot be signed.",
+					 frappe.exceptions.PermissionError)
 
-	# 2. DOUBLE CHECK: Verify the token again before saving/submitting
 	if not verify_token(invoice_id, str(doc.due_date), token):
 		frappe.log_error("Security Alert: Invalid Token on Submission", f"ID: {invoice_id}")
-		frappe.throw("Invalid or expired signing token. Signature rejected.", frappe.exceptions.PermissionError)
+		frappe.throw("Invalid or expired signing token. Signature rejected.",
+					 frappe.exceptions.PermissionError)
 
-	# 3. Process and save the signature image
+	# --------------------------------------------------------------------------------
+	# 2. Audit Trail Generation and Integrity Hash
+	# --------------------------------------------------------------------------------
+
+	# Serialization of trace data for the Hash (ensures order consistency)
+	trace_data_str = json.dumps(signature_trace_data, sort_keys=True)
+
+	# Critical data for the SHA-256 Hash (links all components immutably)
+	critical_data = f"{invoice_id}|{signer_name}|{trace_data_str}|{signature_image}"
+	signature_hash = hashlib.sha256(critical_data.encode('utf-8')).hexdigest()
+
+	# Environmental Metadata
+	client_ip = frappe.request.remote_addr
+	user_agent = frappe.request.headers.get('User-Agent')
+	server_timestamp = now_datetime()  # Server-side timestamp
+
+	# CONVERSIONE: Converti l'oggetto datetime in una stringa ISO 8601
+	server_timestamp_str = server_timestamp.isoformat()
+
+	# --------------------------------------------------------------------------------
+	# 3. Data Storage (Attachments)
+	# --------------------------------------------------------------------------------
 	try:
-		# Frappe requires base64 string without data prefix
-		# Example: 'data:image/png;base64,iVBORw0KGgoAAA...' -> 'iVBORw0KGgoAAA...'
+		# A. Save Signature Image File
+		# Separates the Data URL header from the Base64 content
 		base64_data = signature_image.split(",")[1]
 		file_content = base64.b64decode(base64_data)
 
-		# Create a Frappe File attachment for the signature
-		file_doc = frappe.get_doc({
+		# Create the File attachment for the image
+		frappe.get_doc({
 			"doctype": "File",
 			"file_name": f"signature-{invoice_id}.png",
 			"attached_to_doctype": DOC_TYPE,
 			"attached_to_name": invoice_id,
 			"content": file_content,
 			"folder": "Home/Signatures",
-			"is_private": 1 # Keep signature private
-		})
-		file_doc.insert(ignore_permissions=True)
-		frappe.db.commit()
+			"is_private": 1
+		}).insert(ignore_permissions=True)
 
-		# 4. Update the Invoice document with signer name and signature link
+		# B. Save Audit Trail File (Temporal Trace JSON)
+		audit_trail_data = {
+			"signer_name": signer_name,
+			"trace_data": signature_trace_data,  # <--- TEMPORAL DATA CAPTURED AND SAVED!
+			"hash_sha256": signature_hash,
+			"signed_on_server": server_timestamp_str,
+			"client_ip": client_ip,
+			"user_agent": user_agent,
+		}
+
+		# Use Unix timestamp to ensure file name uniqueness
+		trace_filename = f"signature_audit_{invoice_id}_{int(time.time())}.json"
+		trace_content_str = json.dumps(audit_trail_data, indent=2)
+
+		frappe.get_doc({
+			"doctype": "File",
+			"file_name": trace_filename,
+			"attached_to_doctype": DOC_TYPE,
+			"attached_to_name": invoice_id,
+			# Salviamo la stringa JSON come contenuto del file
+			"content": trace_content_str.encode('utf-8'),
+			"folder": "Home/Signatures",  # Potresti voler una cartella separata
+			"is_private": 1
+		}).insert(ignore_permissions=True)
+
+		# --------------------------------------------------------------------------------
+		# 4. Update Main Document (Sales Invoice)
+		# --------------------------------------------------------------------------------
 		doc.signer_name = signer_name
-		doc.signed_on = now_datetime()
+		doc.signed_on = server_timestamp
 
-		# Final action: Change the document status or process the next step
-		# E.g., You might move it to a "Confirmed" status, or submit it if docstatus was 0
+		# Update custom fields with hash and IP for easy reference
+		# doc.signature_hash = signature_hash
+		# doc.client_ip = client_ip
 
 		doc.save(ignore_permissions=True)
 		frappe.db.commit()
 
-		frappe.msgprint(f"Signature for {invoice_id} acquired successfully.")
+		frappe.msgprint(
+			f"Signature for {invoice_id} acquired and secured successfully. Hash: {signature_hash[:10]}...")
+		return {"message": "Signature saved successfully.", "hash": signature_hash}
 
 	except Exception as e:
-		frappe.log_error(f"Error processing signature for {invoice_id}", str(e))
-		frappe.throw("Failed to process signature. Please try again.")
+		frappe.db.rollback()
+		frappe.log_error(f"Error processing signature for {invoice_id}", frappe.get_traceback())
+		frappe.throw(f"Failed to process signature: {str(e)}")
 
 
 # Example function to be called when sending the email to the client
