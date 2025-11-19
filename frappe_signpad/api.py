@@ -117,7 +117,14 @@ def submit_invoice_signature(invoice_id, token, signer_name, signature_image, si
 	signature_hash = hashlib.sha256(critical_data.encode('utf-8')).hexdigest()
 
 	# Environmental Metadata
-	client_ip = frappe.request.remote_addr
+	forwarded_for = frappe.request.headers.get('X-Forwarded-For')
+	if forwarded_for:
+		# Get the first (client's) IP address from the comma-separated list
+		client_ip = forwarded_for.split(',')[0].strip()
+	else:
+		# Fallback to the direct address (will be proxy/localhost if behind a proxy)
+		client_ip = frappe.request.remote_addr
+
 	user_agent = frappe.request.headers.get('User-Agent')
 	server_timestamp = now_datetime()  # Server-side timestamp
 
