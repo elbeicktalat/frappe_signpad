@@ -1,5 +1,5 @@
 import React, {type MouseEvent, type TouchEvent, useCallback, useEffect, useRef, useState} from 'react';
-import {CheckCircle, Clipboard} from 'lucide-react'; // Import CheckCircle icon
+import {CheckCircle, Clipboard} from 'lucide-react';
 
 // Defines the structure of the translations
 interface Translations {
@@ -17,11 +17,12 @@ interface Translations {
     submit_button: string;
     disclaimer: string;
     error_fill_fields: string;
+    error_signature_too_simple: string;
+    error_signature_too_fast: string;
     message_sending: string;
     message_success: string;
     message_copy_id: string;
     message_fail: string;
-    // New message for already signed document
     message_already_signed: string;
     lang_it: string;
     lang_en: string;
@@ -41,14 +42,21 @@ type TranslationMap = {
 interface InvoiceDetails {
     invoice_id: string;
     total_qty: number;
-    total_amount: string; // Formatted number string (e.g., "8,500.00")
+    total_amount: string;
     due_date: string;
-    currency_symbol: string; // The dynamically fetched currency symbol (e.g., '€', '$')
+    currency_symbol: string;
     is_signed: boolean;
 }
 
 // Type for drawing events (handles both Mouse and Touch)
 type DrawEvent = MouseEvent<HTMLCanvasElement> | TouchEvent<HTMLCanvasElement>;
+
+// Definizione del punto tracciato con Timestamp
+type TracePoint = { x: number, y: number, time: number };
+
+// --- CONSTANTS ---
+const MIN_TRACE_LENGTH = 1500; // Lunghezza minima del tracciato in pixel
+const MIN_SIGNING_DURATION_MS = 500; // Durata minima del disegno (0.5 secondi)
 
 // --- CURRENCY SYMBOL MAP ---
 const CurrencySymbolMap: { [key: string]: string } = {
@@ -88,11 +96,13 @@ const translations: TranslationMap = {
         submit_button: 'Submit and Confirm',
         disclaimer: 'By clicking "Submit and Confirm" you declare that you have received, understood, and accepted the above invoice.',
         error_fill_fields: 'Please enter your name and sign the document.',
+        error_signature_too_simple: 'The signature is too short or simple (e.g., a single line). Please trace a complete signature.',
+        error_signature_too_fast: 'The signature was traced too quickly. Please sign naturally.',
         message_sending: 'Sending...',
         message_success: 'Signature acquired successfully! The invoice will be sent to you shortly. You can close this Window.',
         message_copy_id: 'Invoice ID copied.',
         message_fail: 'Submission failed. A critical error occurred. Please try again later.',
-        message_already_signed: 'This invoice has already been signed and confirmed.', // ADDED
+        message_already_signed: 'This invoice has already been signed and confirmed.',
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
@@ -116,11 +126,13 @@ const translations: TranslationMap = {
         submit_button: 'Invia e Conferma',
         disclaimer: 'Cliccando su "Invia e Conferma" si dichiara di aver ricevuto, compreso e accettato la fattura sopra riportata.',
         error_fill_fields: 'Per favore, inserisci il tuo nome e firma il documento.',
+        error_signature_too_simple: 'La firma è troppo breve o banale (es. una linea). Si prega di tracciare una firma completa.',
+        error_signature_too_fast: 'La firma è stata tracciata troppo velocemente. Si prega di firmare in modo naturale.',
         message_sending: 'Invio in corso...',
         message_success: 'Firma acquisita con successo! La fattura ti sarà inviata a breve. Ora puoi chiudere questa finestra.',
         message_copy_id: 'ID Fattura copiato.',
         message_fail: 'Invio fallito. Si è verificato un errore critico. Riprova più tardi.',
-        message_already_signed: 'Questa fattura è già stata firmata e confermata.', // ADDED
+        message_already_signed: 'Questa fattura è già stata firmata e confermata.',
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
@@ -144,11 +156,13 @@ const translations: TranslationMap = {
         submit_button: 'إرسال وتأكيد',
         disclaimer: 'بالنقر على "إرسال وتأكيد" ، فإنك تقر بأنك قد استلمت وفهمت وقبلت الفاتورة المذكورة أعلاه.',
         error_fill_fields: 'الرجاء إدخال اسمك وتوقيع المستند.',
+        error_signature_too_simple: 'التوقيع قصير جداً أو بسيط (مثل خط واحد). الرجاء رسم توقيع كامل.',
+        error_signature_too_fast: 'تم رسم التوقيع بسرعة كبيرة. الرجاء التوقيع بشكل طبيعي.',
         message_sending: 'جار الإرسال...',
         message_success: 'تم الحصول على التوقيع بنجاح! سيتم إرسال الفاتورة إليك قريبًا. يمكنك إغلاق هذه النافذة.',
         message_copy_id: 'تم نسخ رقم الفاتورة.',
         message_fail: 'فشل الإرسال. حدث خطأ فادح. الرجاء المحاولة لاحقًا.',
-        message_already_signed: 'تم توقيع وتأكيد هذه الفاتورة مسبقاً.', // ADDED
+        message_already_signed: 'تم توقيع وتأكيد هذه الفاتورة مسبقاً.',
         lang_it: 'Italiano',
         lang_en: 'English',
         lang_ar: 'العربية',
@@ -166,6 +180,35 @@ const flagMap: { [key: string]: string } = {
     ar: '🇸🇦',
 };
 
+// --- HELPER FUNCTIONS FOR COMPLEXITY VALIDATION ---
+const calculateDistance = (p1: { x: number, y: number }, p2: { x: number, y: number }): number => {
+    return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+};
+
+// Validazione Complessità (Lunghezza)
+const validateSignatureComplexity = (points: TracePoint[]): boolean => {
+    if (points.length < 5) return false;
+
+    let totalLength = 0;
+    for (let i = 1; i < points.length; i++) {
+        totalLength += calculateDistance(points[i - 1], points[i]);
+    }
+
+    return totalLength >= MIN_TRACE_LENGTH;
+};
+
+// Validazione Durata (Tempo)
+const validateSignatureDuration = (points: TracePoint[]): boolean => {
+    if (points.length < 2) return false;
+
+    const startTime = points[0].time;
+    const endTime = points[points.length - 1].time;
+    const duration = endTime - startTime;
+
+    return duration >= MIN_SIGNING_DURATION_MS;
+};
+
+
 // Main application component
 const App: React.FC = () => {
     // State for localization and UI control
@@ -176,11 +219,11 @@ const App: React.FC = () => {
     const [isSigned, setIsSigned] = useState<boolean>(false);
     const [isDrawing, setIsDrawing] = useState<boolean>(false);
     const [message, setMessage] = useState<string>('');
-    const [isDocumentSigned, setIsDocumentSigned] = useState<boolean>(false); // Initial state from server
+    const [isDocumentSigned, setIsDocumentSigned] = useState<boolean>(false);
 
     // State for Data Fetching
     const [invoiceId, setInvoiceId] = useState<string | null>(null);
-    const [securityToken, setSecurityToken] = useState<string | null>(null); // SECURE: Store the token
+    const [securityToken, setSecurityToken] = useState<string | null>(null);
     const [invoiceData, setInvoiceData] = useState<InvoiceDetails | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [fetchError, setFetchError] = useState<string | null>(null);
@@ -188,6 +231,8 @@ const App: React.FC = () => {
     // Typing the refs
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const contextRef = useRef<CanvasRenderingContext2D | null>(null);
+    // REF per memorizzare tutti i punti tracciati (X, Y, Time)
+    const tracePointsRef = useRef<TracePoint[]>([]);
 
     const textDirection: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr';
 
@@ -196,7 +241,6 @@ const App: React.FC = () => {
     // ----------------------------------------------------
 
     useEffect(() => {
-        // ... (URL parsing logic remains the same)
         const params = new URLSearchParams(window.location.search);
         const id = params.get('id');
         const token = params.get('token');
@@ -235,19 +279,13 @@ const App: React.FC = () => {
                 const doc_response = await response.json();
                 const doc = doc_response.message;
 
-                // --- 🛑 DATA VALIDATION CHECK ---
+                // --- DATA VALIDATION CHECK ---
                 if (!doc || !doc.name || typeof doc.total_qty !== 'number' || typeof doc.grand_total !== 'number' || !doc.due_date || !doc.currency || typeof doc.is_signed === 'undefined') {
-                    const missingFields = [
-                        !doc.name && 'Invoice ID (name)', typeof doc.total_qty !== 'number' && 'Total Quantity',
-                        typeof doc.grand_total !== 'number' && 'Total Amount', !doc.due_date && 'Due Date',
-                        !doc.currency && 'Currency', typeof doc.is_signed === 'undefined' && 'Is Signed Status'
-                    ].filter(Boolean).join(', ');
-                    throw new Error(`Critical invoice data missing from server response: ${missingFields}.`);
+                    throw new Error(`Critical invoice data missing from server response.`);
                 }
 
                 const currencyCode = doc.currency.toUpperCase();
                 const currencySymbol = CurrencySymbolMap[currencyCode] || currencyCode;
-
                 const initialIsSigned: boolean = !!doc.is_signed;
 
                 const loadedData: InvoiceDetails = {
@@ -256,34 +294,26 @@ const App: React.FC = () => {
                     currency_symbol: currencySymbol,
                     total_amount: `${(doc.grand_total as number).toLocaleString('en-US', {minimumFractionDigits: 2})}`,
                     due_date: doc.due_date,
-                    is_signed: initialIsSigned, // Map to interface
+                    is_signed: initialIsSigned,
                 };
 
                 setInvoiceData(loadedData);
-                setIsDocumentSigned(initialIsSigned); // SET: Store the initial signed status
+                setIsDocumentSigned(initialIsSigned);
 
-                // 4. MESSAGE: Display warning if already signed
                 if (initialIsSigned) {
                     setMessage(T.message_already_signed);
                 }
 
                 setIsLoading(false);
-                return;
-
             } catch (error: any) {
-                // Log the failure without retrying
                 console.error(`Failed to fetch invoice:`, error.message);
                 setFetchError(`Access Denied or Failed to load invoice ${invoiceId}. Details: ${error.message.substring(0, 150)}...`);
                 setIsLoading(false);
-                return;
             }
         };
 
         fetchInvoiceDetails(id, token);
-    }, []);
-
-    // ----------------------------------------------------
-    // CANVAS LOGIC FOR SIGNATURE (Prevent Drawing if signed)
+    }, [T]);
     // ----------------------------------------------------
 
 
@@ -329,6 +359,7 @@ const App: React.FC = () => {
         if (context) {
             context.scale(2, 2);
             context.lineCap = 'round';
+            context.lineJoin = 'round';
             context.strokeStyle = '#000000';
             context.lineWidth = 3;
             contextRef.current = context;
@@ -356,9 +387,10 @@ const App: React.FC = () => {
         };
     }, [isDrawing]);
 
-    // Clear signature can only happen if the document hasn't been submitted yet
+
+    // Clear signature
     const clearSignature = (): void => {
-        if (isDocumentSigned) return; // Block clearing if already signed in the system
+        if (isDocumentSigned) return;
 
         const canvas = canvasRef.current;
         const context = contextRef.current;
@@ -366,23 +398,28 @@ const App: React.FC = () => {
             context.clearRect(0, 0, canvas.offsetWidth, canvas.offsetHeight);
             setIsSigned(false);
             setMessage('');
+            tracePointsRef.current = [];
         }
     };
 
     // Callback to start drawing
     const startDrawing = useCallback((event: DrawEvent): void => {
-        if (isDocumentSigned) return; // BLOCK: Stop drawing if document is already signed
+        if (isDocumentSigned) return;
 
         const context = contextRef.current;
         if (!context) return;
 
         const {offsetX, offsetY} = getCoordinates(event);
+        const currentTime = Date.now();
+
+        // Aggiunge il punto iniziale al tracciato accumulato
+        tracePointsRef.current.push({x: offsetX, y: offsetY, time: currentTime});
 
         context.beginPath();
         context.moveTo(offsetX, offsetY);
         setIsDrawing(true);
-        setIsSigned(true);
-    }, [isDocumentSigned]); // Added isDocumentSigned dependency
+        setMessage('');
+    }, [isDocumentSigned]);
 
     // Callback to draw
     const draw = useCallback((event: DrawEvent): void => {
@@ -392,10 +429,14 @@ const App: React.FC = () => {
         if (!isDrawing || !context) return;
 
         const {offsetX, offsetY} = getCoordinates(event);
+        const currentTime = Date.now();
+
+        // Registra il punto
+        tracePointsRef.current.push({x: offsetX, y: offsetY, time: currentTime});
 
         context.lineTo(offsetX, offsetY);
         context.stroke();
-    }, [isDrawing, isDocumentSigned]); // Added isDocumentSigned dependency
+    }, [isDrawing, isDocumentSigned]);
 
     // Callback to end drawing
     const endDrawing = useCallback((): void => {
@@ -404,10 +445,17 @@ const App: React.FC = () => {
             context.closePath();
         }
         setIsDrawing(false);
+
+        // Se ci sono punti totali, consideriamo la firma "presente" per sbloccare il bottone.
+        if (tracePointsRef.current.length > 0) {
+            setIsSigned(true);
+        }
+
     }, []);
 
+
     // ----------------------------------------------------
-    // FRAPPE SUBMISSION LOGIC (Block if signed)
+    // FRAPPE SUBMISSION LOGIC (Final Validation Check)
     // ----------------------------------------------------
 
     const handleSubmit = async (): Promise<void> => {
@@ -428,15 +476,30 @@ const App: React.FC = () => {
             return;
         }
 
+        // 1. Validazione Complessità (Lunghezza)
+        if (!validateSignatureComplexity(tracePointsRef.current)) {
+            setMessage(T.error_signature_too_simple);
+            return;
+        }
+
+        // 2. Validazione Durata (Tempo)
+        if (!validateSignatureDuration(tracePointsRef.current)) {
+            setMessage(T.error_signature_too_fast);
+            return;
+        }
+
+
         const canvas = canvasRef.current;
         if (!canvas) return;
 
         const signatureBase64: string = canvas.toDataURL('image/png');
 
+        // Preparazione dei dati da inviare, inclusi i punti di tracciamento per l'Audit Trail
         const dataToSend = {
             invoice_id: invoiceData.invoice_id,
             signer_name: signerName,
             signature_image: signatureBase64,
+            signature_trace_data: tracePointsRef.current,
             token: securityToken,
         };
 
@@ -453,7 +516,7 @@ const App: React.FC = () => {
 
             if (response.ok) {
                 setMessage(T.message_success);
-                setIsDocumentSigned(true); // UPDATE: Mark as signed locally after successful submission
+                setIsDocumentSigned(true);
                 return;
             } else {
                 const errorData: any = await response.json();
@@ -461,7 +524,6 @@ const App: React.FC = () => {
                 throw new Error(errorMessage);
             }
         } catch (error: any) {
-            // Log the failure and display the fail message
             console.error(`Submission failed:`, error.message);
             setMessage(T.message_fail);
         }
@@ -557,7 +619,7 @@ const App: React.FC = () => {
 
                     <div className="flex items-center justify-between mt-2">
                         <p className="text-lg font-mono tracking-wider flex items-center space-x-2 rtl:space-x-reverse">
-                            {/* 1. ADDED: Green checkmark next to ID if signed */}
+                            {/* Green checkmark next to ID if signed */}
                             {isDisabled && <CheckCircle size={20} className="text-green-300; ml-2 mr-2"/>}
                             <span>{data.invoice_id}</span>
                         </p>
@@ -618,6 +680,7 @@ const App: React.FC = () => {
                         <canvas
                             ref={canvasRef}
                             className={`w-full h-48 ${isDisabled ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
+                            // FIX FOR ANDROID SCROLLING: touch-action: none
                             style={{touchAction: 'none'}}
                             onMouseDown={startDrawing}
                             onMouseUp={endDrawing}
@@ -634,7 +697,7 @@ const App: React.FC = () => {
                                 {T.signature_placeholder}
                             </div>
                         )}
-                        {/* 3. UPDATED: Overlay for already signed document, using CheckCircle */}
+                        {/* Overlay for already signed document */}
                         {isDisabled && (
                             <div
                                 className="absolute inset-0 flex items-center justify-center bg-green-100 bg-opacity-70 text-green-800 text-lg font-bold pointer-events-none">
@@ -649,9 +712,9 @@ const App: React.FC = () => {
                 <div className={`p-6 pt-4 border-t border-gray-100 ${textDirection === 'rtl' ? 'text-right' : ''}`}>
                     {message && (
                         <div
-                            // 2. UPDATED: Message box styling
-                            className={`p-3 mb-4 rounded-lg text-sm font-semibold flex items-center ${message.includes(T.message_success.substring(0, 10)) ? 'bg-green-100 text-green-800' : message.includes(T.message_already_signed) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                            {message.includes(T.message_already_signed) && <CheckCircle size={20} className="m-2"/>}
+                            className={`p-3 mb-4 rounded-lg text-sm font-semibold flex items-center ${message.includes(T.message_success.substring(0, 10)) || message.includes(T.message_already_signed) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                            {(message.includes(T.message_success.substring(0, 10)) || message.includes(T.message_already_signed)) &&
+                                <CheckCircle size={20} className="m-2"/>}
                             {message}
                         </div>
                     )}
