@@ -1,1 +1,13 @@
-[]
+[
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Sales Invoice",
+  "enabled": 1,
+  "modified": "2025-11-18 20:55:08.577452",
+  "module": "Frappe Signpad",
+  "name": "Copy Signing URL",
+  "script": "frappe.ui.form.on('Sales Invoice', {\n\trefresh(frm) {\n\t    frm.add_custom_button(__('Copy Signing URL'), function() {\n            frappe.call({\n                method: 'frappe_signpad.api.get_signing_link',\n                args: {\n                    invoice_id: frm.doc.name,\n                },\n            }).then(e => {\n                copyToClipboard(e.message);\n                frappe.show_alert({\n                    message: __('Copy Signing URL has been successfully copied to Clipboard!'),\n                    indicator: 'green' // Can be 'green', 'yellow', 'red'\n                }, 5); \n            });\n        }, __(\"Actions\"));\n\t}\n});\n\nasync function copyToClipboard(text) {\n  try {\n    await navigator.clipboard.writeText(text);\n    console.log('Text copied to clipboard successfully!');\n  } catch (err) {\n    console.error('Failed to copy text: ', err);\n  }\n}",
+  "view": "Form"
+ }
+]

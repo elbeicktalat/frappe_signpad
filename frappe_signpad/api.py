@@ -64,10 +64,16 @@ This replaces the vulnerable direct API call on the frontend.
 		# Return a 403 error for a security failure
 		frappe.throw("Invalid or expired signing token.", frappe.exceptions.PermissionError)
 
-	# 3. If valid, return only the necessary presentation data
+	# 3. Get Pair/Box qty
+	box_qty, pair_qty = frappe.call('forza.utils.get_box_and_pair_qty', items=doc.items)
+
+	# 4. If valid, return only the necessary presentation data
 	return {
 		"name": doc.name,
-		"total_qty": doc.total_qty,
+		"customer": doc.customer,
+		"pair_qty": pair_qty,
+		"box_qty": box_qty,
+		"terms": doc.terms,
 		"grand_total": doc.grand_total,
 		"due_date": str(doc.due_date),
 		"currency": doc.currency,
