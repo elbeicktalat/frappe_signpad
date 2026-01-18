@@ -577,8 +577,7 @@ const App: React.FC = () => {
     }
 
 
-
-    const pdfUrl = `/api/method/frappe.utils.print_format.download_pdf?doctype=Sales%20Invoice&name=${encodeURIComponent(invoiceData.invoice_id)}&format=HTML%20Sales%20Invoice%20Format`;
+    const pdfUrl = `/api/method/frappe_signpad.api.get_pdf_securely?invoice_id=${invoiceData.invoice_id}&token=${securityToken}`;
     const isDisabled: boolean = isDocumentSigned;
 
     return (

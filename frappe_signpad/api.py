@@ -8,8 +8,10 @@ import time  # Required to generate a unique timestamp for the file name
 
 # IMPORTANT: Store this in a secure config/settings file, NOT directly in the code!
 # For demonstration, it's here.
-SECRET_KEY = frappe.get_site_config().get("invoice_signing_secret_key", "A_VERY_LONG_AND_SECURE_RANDOM_STRING_HERE")
+SECRET_KEY = frappe.get_site_config().get("invoice_signing_secret_key",
+										  "A_VERY_LONG_AND_SECURE_RANDOM_STRING_HERE")
 DOC_TYPE = "Sales Invoice"
+
 
 def generate_token(invoice_id, due_date):
 	"""Generates an HMAC-SHA256 token based on the invoice data and secret key."""
@@ -25,6 +27,7 @@ def generate_token(invoice_id, due_date):
 
 	return signature
 
+
 def verify_token(invoice_id, expected_due_date, client_token):
 	"""Verifies the token sent by the client."""
 	# 1. Recalculate the expected token
@@ -32,6 +35,7 @@ def verify_token(invoice_id, expected_due_date, client_token):
 
 	# 2. Compare using constant-time comparison to prevent timing attacks
 	return hmac.compare_digest(expected_token, client_token)
+
 
 # --- PUBLIC API METHODS ---
 
@@ -51,8 +55,9 @@ This replaces the vulnerable direct API call on the frontend.
 		frappe.throw(f"Invoice {invoice_id} not found.", frappe.exceptions.NotFound)
 
 	# Check if invoice is already signed/submitted
-	if doc.docstatus != 1: # Assuming status 1 is Submit/Unsigned
-		frappe.throw("Invoice is not in a signable state or is already signed.", frappe.exceptions.PermissionError)
+	if doc.docstatus != 1:  # Assuming status 1 is Submit/Unsigned
+		frappe.throw("Invoice is not in a signable state or is already signed.",
+					 frappe.exceptions.PermissionError)
 
 	# 2. Verify the token using the actual due_date from the document
 	if not verify_token(invoice_id, str(doc.due_date), token):
@@ -83,7 +88,8 @@ This replaces the vulnerable direct API call on the frontend.
 
 
 @frappe.whitelist(allow_guest=True)
-def submit_invoice_signature(invoice_id, token, signer_name, signature_image, signature_trace_data):
+def submit_invoice_signature(invoice_id, token, signer_name, signature_image,
+							 signature_trace_data):
 	"""
 	Receives signature data, including temporal trace (Audit Trail),
 	verifies integrity via Hash, and saves the evidence as attachments.
@@ -217,3 +223,37 @@ def get_signing_link(invoice_id):
 		return signing_url
 	except Exception:
 		return f"Error generating link for {invoice_id}"
+
+
+@frappe.whitelist(allow_guest=True)
+def get_pdf_securely(invoice_id, token):
+	"""
+Validates custom HMAC token and generates PDF by elevating privileges.
+	"""
+	# 1. Fetch the document to get the due_date
+	try:
+		doc = frappe.get_doc("Sales Invoice", invoice_id)
+	except frappe.DoesNotExistError:
+		frappe.throw("Invoice not found", frappe.exceptions.NotFound)
+
+	# 2. Verify your custom HMAC token
+	if not verify_token(invoice_id, str(doc.due_date), token):
+		frappe.throw("Invalid security token.", frappe.exceptions.PermissionError)
+
+	# 3. ELEVATE PRIVILEGES
+	# We temporarily switch to Administrator to bypass 'validate_print_permission'
+	original_user = frappe.session.user
+	try:
+		frappe.set_user("accounting@feinx-surgit.com")
+
+		from frappe.utils.print_format import download_pdf
+		pdf_content = download_pdf(
+			doctype="Sales Invoice",
+			name=invoice_id,
+			format="HTML Sales Invoice Format"
+		)
+		return pdf_content
+
+	finally:
+		# ALWAYS switch back to the original user (Guest) in the 'finally' block
+		frappe.set_user(original_user)
